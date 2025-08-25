@@ -83,9 +83,7 @@ Every test:
 
 **Endpoint:** `GET /v1/breweries`
 
-Goal: outline how to automate this method comprehensively. 
-
-# Test Plan: `GET /breweries` (List Breweries)
+Goal: outline how to automate this method comprehensively.
 
 ## Test Design Techniques (and why)
 
