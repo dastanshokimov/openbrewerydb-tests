@@ -1,4 +1,4 @@
-# OpenBreweryDB — AQA task (Java + REST Assured)
+# AQA task (Java + REST Assured + TestNG + AssertJ)
 
 ## Prerequisites
 - **Java 17+**
@@ -36,11 +36,11 @@ src
 
 ---
 
-## Part 1 — “Search Breweries” coverage (what is implemented)
+## Part 1: “Search Breweries” coverage (what is implemented)
 
 **Endpoint:** `GET /v1/breweries/search?query={search}`
 
-We implemented up to 5 scenarios that cover the method’s core behavior.  
+Implemented up to 5 scenarios that cover the method’s core behavior.  
 Every test:
 - asserts **HTTP 200** (or an expected error for negative)
 - validates the **response contract** via JSON Schema
@@ -79,66 +79,89 @@ Every test:
 
 ---
 
-## Part 2 — “List Breweries” test design (what & why; effort estimate)
+## Part 2: “List Breweries” test design (what & why; effort estimate)
 
 **Endpoint:** `GET /v1/breweries`
 
-Goal: outline how to automate this method comprehensively. Below is a **practical** test set you can implement incrementally.
+Goal: outline how to automate this method comprehensively. 
 
-### A. Contract, smoke & determinism
-- **Contract (schema) check** for **list** and for **single** objects.
-  - *Why:* catches breaking changes early.
-- **Content-Type** → `application/json` and **UTF-8`.
-  - *Why:* client compatibility.
+# Test Plan: `GET /breweries` (List Breweries)
 
-### B. Pagination & limits (if supported by API)
-- **Default page size** returns a sensible number of items.
-- **`per_page` boundaries** (e.g., `1`, maximum allowed).
-- **`page` navigation**: page 1 vs page 2 have **no overlap**.
-  - *Why:* correctness of pagination & offsets.
+## Test Design Techniques (and why)
 
-### C. Filtering (based on API capabilities)
-- **Single filter** (e.g., `by_city=Portland`) returns only records that match.
-- **Multiple filters** combined (e.g., `by_state=California&by_type=micro`).
-- **Case-insensitive** and **URL-encoded** values (e.g., spaces, commas).
+1. **Equivalence Partitioning**  
+   Split input values into valid (known filters, correct types) and invalid (unknown, empty).  
+   *Why:* Ensures broad coverage with fewer tests.
 
-### D. Data quality (spot checks)
-- **Geo fields**: `latitude/longitude` are either `null` or parsable numbers within ranges.
-- **Website/phone** formats plausible (basic regex).
-  - *Why:* data hygiene.
+2. **Boundary Value Analysis**  
+   Validate limits for `per_page` (1, 200, >200), `page`, postal code formats.  
+   *Why:* APIs often fail at boundaries.
 
-### E. Negative & robustness
-- **Invalid params**: `per_page=-1`, `per_page=0`, `per_page=verybig`, unknown filters.
-  - *Expected:* `400`/`422` or safe fallback.
-- **Unsupported methods**: `POST`/`PUT`/`DELETE` → `405`.
-- **Large page number** beyond dataset size → empty list.
-- **Rate-limit / throttling** smoke if API applies limits.
+3. **Combinatorial / Pairwise**  
+   Combine 1–2 filters with pagination/sorting (e.g., `by_state + by_type`).  
+   *Why:* Most real bugs appear from interaction of 2 params.
 
-### F. Performance (lightweight)
-- **P95/P99** time budget smoke (e.g., `GET /breweries?per_page=50` < **X** ms).
+4. **Contract Testing (Schema Validation)**  
+   Every 2xx response must match `brewery-list.schema.json`.  
+   *Why:* Protects against regression in structure/field types.
 
-### G. Non-functional checks (optional)
-- **CORS** headers present (if UI integrations expected).
-- **Caching** headers: responses may be cacheable.
+5. **Error Guessing / Negative Testing**  
+   Wrong types (`by_type=foobar`), unsupported methods (`POST /breweries`), conflicting params.  
+   *Why:* Covers typical implementation pitfalls.
+
+6. **Collection Invariants**
+    - `per_page=N` → exactly N items (or fewer if not enough data).
+    - Different `page` values → disjoint sets.
+    - Sorting order respected.  
+      *Why:* Ensures system-level consistency of results.
 
 ---
 
-## Estimation
+## Test Cases
 
-**MVP coverage for List Breweries** (schema, basic pagination, 2 filters, negative cases): **~6–8 hours**.  
-**Full coverage** (all filters, boundaries, perf & data quality): **~1.5–2.5 days**.
+### A. Basic / Contract
+- **Default call without params** → `200 OK`, ≤50 items, schema valid.
+- **Schema validation** is applied on every successful response.
+
+### B. Pagination
+- `per_page=1` → exactly 1 item.
+- `per_page=200` → ≤200 items.
+- `page=1` vs `page=2` (same `per_page`) → no overlap.
+- `per_page=201` → either capped to 200 or error (documented behavior to be confirmed).
+
+### C. Attribute Filters
+- `by_city=San_Diego` → all `"city" == "San Diego"`.
+- `by_state=California` → all `"state" == "California"`.
+- `by_country=United_States` → all `"country" == "United States"`.
+- `by_postal=94107` (5-digit) → all postal codes start with `94107`.
+- `by_postal=94107-1234` (9-digit) → exact match required.
+- `by_type=micro` (repeat for a few types) → all have `"brewery_type" == "micro"`.
+
+### D. IDs & Distance
+- `by_ids=<id1,id2>` → returns exactly these IDs.
+- `by_dist=<lat,lon>` → closest breweries; confirm note: `sort` cannot be combined with `by_dist`.
+
+### E. Sorting
+- `sort=name&order=asc&per_page=10` → alphabetical ascending.
+- `sort=name&order=desc&per_page=10` → descending.
+- Combine filter + sort (`by_state=California&sort=name`) → both respected.
+
+### F. Negative / Resilience
+- `by_type=foobar` → empty list.
+- `POST /breweries` → `405 Method Not Allowed`.
+- Conflicting: `sort` with `by_dist` → confirm actual behavior (ignore or documented error).
+- Empty filter values (`by_city=`) → consistent response (like no filter or empty list).
 
 ---
 
-## Tech stack & rationale
-- **REST Assured** — concise HTTP client for tests.
-- **TestNG** — flexible parametrization & lifecycle hooks.
-- **AssertJ** — fluent assertions.
-- **json-schema-validator** — contract testing.
+## Estimation (only for `/breweries`)
+
+Full coverage of `/breweries` with pagination, filters, sorting, and negative cases would take around **6 hours** of work. A minimal but representative set (1–2 cases per feature + negatives) could be completed in about **3.5–4 hours**.
 
 ---
 
-## Deliverables
-- Source code (tests + schemas).
-- This README.
-- Optional: test report from `mvn test` (Surefire) and logs if failures occur.
+## Notes
+- Tests must be **idempotent**: no dependency on specific data, except when fetching live IDs/names and verifying them via `by_ids` or `search`.
+- Sorting checks: compare actual list with a locally sorted copy.
+- Contract validation (`brewery-list.schema.json`) is always applied for 2xx responses.
+- Special case: `by_dist` with `sort` must be explicitly tested as per documentation.
